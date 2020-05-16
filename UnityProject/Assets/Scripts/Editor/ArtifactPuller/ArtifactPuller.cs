@@ -1,4 +1,7 @@
-﻿using Assets.Scripts.Editor.ArtifactPuller.AzureDevopsAPIResponses;
+﻿using Assets.Scripts.Editor.ArtifactPuller.AzureDevopsAPIResponses.FeedData;
+using Assets.Scripts.Editor.ArtifactPuller.AzureDevopsAPIResponses.FeedsData;
+using Assets.Scripts.Editor.ArtifactPuller.AzureDevopsAPIResponses.PackagesData;
+using ICSharpCode.SharpZipLib.Zip;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -9,8 +12,30 @@ using System.Net.Http.Headers;
 using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.Networking;
+
 namespace Assets.Scripts.Editor.ArtifactPuller
 {
+    public class Extractor : IExtractor
+    {
+        public void ExtractIntoFolder(string zipFilePath, string outputFolder)
+        {
+            new FastZip().ExtractZip(zipFilePath, outputFolder, null);
+        }
+    }
+    public class Serializer : IJsonSerializer
+    {
+        public T Deserialize<T>(string serializedData)
+        {
+            return Newtonsoft.Json.JsonConvert.DeserializeObject<T>(serializedData);
+        }
+
+        public string Serialize(object target)
+        {
+            return Newtonsoft.Json.JsonConvert.SerializeObject(target);
+        }
+    }
+
     public class PullerConfig
     {
         //Required
@@ -74,14 +99,15 @@ namespace Assets.Scripts.Editor.ArtifactPuller
 
                         var feeds = await GetFeeds(client, Config.Organization);
                         var relatedFeed = feeds.value.First(val => val.fullyQualifiedName == Config.FeedName);
-
-                        var packages = await GetPackages(client, Config.Organization, relatedFeed.id);
+                        string projectId = feeds.value[0].project.id;
+                        string uri = relatedFeed.url;
+                        var feedData = await GetFeedData(client, Config.Organization, uri);
+                        string packageUri = feedData._links.packages.href;
+                        var packages = await GetPackages(client, packageUri);
                         var relatedPackage = packages.value.First(val => val.name == Config.PackageName);
-
-                        var byteArray = await DownloadPackage(client, Config.Organization, relatedFeed.id,
+                        var byteArray = await DownloadPackage(client, Config.Organization, projectId, relatedFeed.id,
                             Config.PackageName, relatedPackage.versions[0].version);
-
-
+                        //var packages = await GetPackages(client, Config.Organization, relatedFeed.id);
                         if (!Directory.Exists(TargetDLLsPath))
                             Directory.CreateDirectory(TargetDLLsPath);
 
@@ -96,14 +122,9 @@ namespace Assets.Scripts.Editor.ArtifactPuller
 
                         string[] dllResults = Directory.GetFiles(temporaryDecompressionPath, Config.PackageName + ".dll",
                             SearchOption.AllDirectories);
-                        string[] xmlResults = Directory.GetFiles(temporaryDecompressionPath, Config.PackageName + ".xml",
-                            SearchOption.AllDirectories);
 
                         string dllOutputPath = Path.Combine(TargetDLLsPath, Path.GetFileName(dllResults[0]));
-                        string xmlOutputPath = Path.Combine(TargetDLLsPath, Path.GetFileName(xmlResults[0]));
-                        Debug.LogFormat("dll:{0} || xml:{1}", dllOutputPath, xmlOutputPath);
                         File.Copy(dllResults[0], dllOutputPath, true);
-                        File.Copy(xmlResults[0], xmlOutputPath, true);
 
                         File.Delete(zipFilePath);
                         Directory.Delete(temporaryDecompressionPath, true);
@@ -111,7 +132,7 @@ namespace Assets.Scripts.Editor.ArtifactPuller
                     }
                     catch (Exception exp)
                     {
-                        Debug.LogErrorFormat("Error while downloading. Exp: {0}", exp.Message);
+                        Debug.LogErrorFormat("Error while downloading. Exp: {0}. St:{1}", exp.Message, exp.StackTrace);
                     }
                 }
             }
@@ -129,44 +150,53 @@ namespace Assets.Scripts.Editor.ArtifactPuller
                 _internalConfig = _serializer.Deserialize<PullerConfig>(File.ReadAllText(configJsonPath));
             }
         }
-
-
-        public async Task<AzureDevOps_FeedData> GetFeeds(HttpClient client, string organization)
+        public async Task<FeedsData> GetFeeds(HttpClient client, string organization)
         {
             string requestURI =
                 $"https://feeds.dev.azure.com/{organization}/_apis/packaging/feeds?api-version=5.0-preview.1";
-            Debug.Log(requestURI);
             using (HttpResponseMessage response = await client.GetAsync(requestURI))
             {
-                response.EnsureSuccessStatusCode();
                 string result = await response.Content.ReadAsStringAsync();
-
-                return _serializer.Deserialize<AzureDevOps_FeedData>(result);
+                return _serializer.Deserialize<FeedsData>(result);
             }
         }
 
-        public async Task<AzureDevOps_PackageData> GetPackages(HttpClient client, string organization, string feedId)
+        public async Task<FeedData> GetFeedData(HttpClient client, string organization, string url)
         {
             using (HttpResponseMessage response = await client.GetAsync(
-                $"https://feeds.dev.azure.com/{organization}/_apis/packaging/Feeds/{feedId}/packages?api-version=5.0-preview.1")
+                url)
             )
             {
-                response.EnsureSuccessStatusCode();
                 string responseBody = await response.Content.ReadAsStringAsync();
-                AzureDevOps_PackageData data = _serializer.Deserialize<AzureDevOps_PackageData>(responseBody);
+                FeedData data = _serializer.Deserialize<FeedData>(responseBody);
+                Debug.Log(responseBody);
                 return data;
             }
         }
 
-        public static async Task<byte[]> DownloadPackage(HttpClient client, string Organization, string FeedID,
+        public async Task<PackagesData> GetPackages(HttpClient client, string packagesUri)
+        {
+            using (HttpResponseMessage response = await client.GetAsync(packagesUri))
+            {
+                string result = await response.Content.ReadAsStringAsync();
+                return _serializer.Deserialize<PackagesData>(result);
+            }
+        }
+        public async Task<PackagesData> GetPackage(HttpClient client, string packagesUri)
+        {
+            using (HttpResponseMessage response = await client.GetAsync(packagesUri))
+            {
+                string result = await response.Content.ReadAsStringAsync();
+                return _serializer.Deserialize<PackagesData>(result);
+            }
+        }
+        public static async Task<byte[]> DownloadPackage(HttpClient client, string Organization, string ProjectID, string FeedID,
             string PackageName, string PackageVersion)
         {
-            string uri = $"https://pkgs.dev.azure.com/{Organization}/" +
-                         //$"https://pkgs.dev.azure.com/{Organization}/{ProjectID}/" +
+            string uri = $"https://pkgs.dev.azure.com/{Organization}/{ProjectID}/" +
                          $"_apis/packaging/feeds/{FeedID}/nuget/packages/{PackageName}/versions/{PackageVersion}/content?api-version=5.1-preview.1";
-            using (HttpResponseMessage response = client.GetAsync(uri).Result)
+            using (HttpResponseMessage response = await client.GetAsync(uri))
             {
-                response.EnsureSuccessStatusCode();
                 return await response.Content.ReadAsByteArrayAsync();
             }
         }
