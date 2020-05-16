@@ -85,27 +85,19 @@ namespace Assets.Scripts.Editor.ArtifactPuller
 
             if (GUILayout.Button("Download"))
             {
-                using (HttpClient client = new HttpClient())
+                using (AzureDevopsClient client = new AzureDevopsClient(Config.PersonalAccessToken,_serializer))
                 {
                     try
                     {
-                        client.DefaultRequestHeaders.Accept.Add(
-                            new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
-
-                        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic",
-                            Convert.ToBase64String(
-                                System.Text.ASCIIEncoding.ASCII.GetBytes(
-                                    string.Format("{0}:{1}", "", Config.PersonalAccessToken))));
-
-                        var feeds = await GetFeeds(client, Config.Organization);
+                        var feeds = await client.GetFeeds(Config.Organization);
                         var relatedFeed = feeds.value.First(val => val.fullyQualifiedName == Config.FeedName);
                         string projectId = feeds.value[0].project.id;
                         string uri = relatedFeed.url;
-                        var feedData = await GetFeedData(client, Config.Organization, uri);
+                        var feedData = await client.GetFeedData(Config.Organization, uri);
                         string packageUri = feedData._links.packages.href;
-                        var packages = await GetPackages(client, packageUri);
+                        var packages = await client.GetPackages(packageUri);
                         var relatedPackage = packages.value.First(val => val.name == Config.PackageName);
-                        var byteArray = await DownloadPackage(client, Config.Organization, projectId, relatedFeed.id,
+                        var byteArray = await client.DownloadPackage( Config.Organization, projectId, relatedFeed.id,
                             Config.PackageName, relatedPackage.versions[0].version);
                         //var packages = await GetPackages(client, Config.Organization, relatedFeed.id);
                         if (!Directory.Exists(TargetDLLsPath))
@@ -150,55 +142,7 @@ namespace Assets.Scripts.Editor.ArtifactPuller
                 _internalConfig = _serializer.Deserialize<PullerConfig>(File.ReadAllText(configJsonPath));
             }
         }
-        public async Task<FeedsData> GetFeeds(HttpClient client, string organization)
-        {
-            string requestURI =
-                $"https://feeds.dev.azure.com/{organization}/_apis/packaging/feeds?api-version=5.0-preview.1";
-            using (HttpResponseMessage response = await client.GetAsync(requestURI))
-            {
-                string result = await response.Content.ReadAsStringAsync();
-                return _serializer.Deserialize<FeedsData>(result);
-            }
-        }
 
-        public async Task<FeedData> GetFeedData(HttpClient client, string organization, string url)
-        {
-            using (HttpResponseMessage response = await client.GetAsync(
-                url)
-            )
-            {
-                string responseBody = await response.Content.ReadAsStringAsync();
-                FeedData data = _serializer.Deserialize<FeedData>(responseBody);
-                Debug.Log(responseBody);
-                return data;
-            }
-        }
 
-        public async Task<PackagesData> GetPackages(HttpClient client, string packagesUri)
-        {
-            using (HttpResponseMessage response = await client.GetAsync(packagesUri))
-            {
-                string result = await response.Content.ReadAsStringAsync();
-                return _serializer.Deserialize<PackagesData>(result);
-            }
-        }
-        public async Task<PackagesData> GetPackage(HttpClient client, string packagesUri)
-        {
-            using (HttpResponseMessage response = await client.GetAsync(packagesUri))
-            {
-                string result = await response.Content.ReadAsStringAsync();
-                return _serializer.Deserialize<PackagesData>(result);
-            }
-        }
-        public static async Task<byte[]> DownloadPackage(HttpClient client, string Organization, string ProjectID, string FeedID,
-            string PackageName, string PackageVersion)
-        {
-            string uri = $"https://pkgs.dev.azure.com/{Organization}/{ProjectID}/" +
-                         $"_apis/packaging/feeds/{FeedID}/nuget/packages/{PackageName}/versions/{PackageVersion}/content?api-version=5.1-preview.1";
-            using (HttpResponseMessage response = await client.GetAsync(uri))
-            {
-                return await response.Content.ReadAsByteArrayAsync();
-            }
-        }
     }
 }
