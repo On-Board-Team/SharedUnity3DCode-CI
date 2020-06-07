@@ -85,21 +85,11 @@ namespace Assets.Scripts.Editor.ArtifactPuller
 
             if (GUILayout.Button("Download"))
             {
-                using (AzureDevopsClient client = new AzureDevopsClient(Config.PersonalAccessToken,_serializer))
+                using (AzureDevopsClient client = new AzureDevopsClient(Config.PersonalAccessToken, _serializer))
                 {
                     try
                     {
-                        var feeds = await client.GetFeeds(Config.Organization);
-                        var relatedFeed = feeds.value.First(val => val.fullyQualifiedName == Config.FeedName);
-                        string projectId = feeds.value[0].project.id;
-                        string uri = relatedFeed.url;
-                        var feedData = await client.GetFeedData(Config.Organization, uri);
-                        string packageUri = feedData._links.packages.href;
-                        var packages = await client.GetPackages(packageUri);
-                        var relatedPackage = packages.value.First(val => val.name == Config.PackageName);
-                        var byteArray = await client.DownloadPackage( Config.Organization, projectId, relatedFeed.id,
-                            Config.PackageName, relatedPackage.versions[0].version);
-                        //var packages = await GetPackages(client, Config.Organization, relatedFeed.id);
+                        var byteArray = await client.DownloadPackage(Config.Organization, Config.FeedName, Config.PackageName);
                         if (!Directory.Exists(TargetDLLsPath))
                             Directory.CreateDirectory(TargetDLLsPath);
 

@@ -71,7 +71,20 @@ namespace Assets.Scripts.Editor.ArtifactPuller
                 return _serializer.Deserialize<PackagesData>(result);
             }
         }
-        public async Task<byte[]> DownloadPackage(string Organization, string ProjectID, string FeedID,
+        public async Task<byte[]> DownloadPackage(string organization, string feedName, string packageName)
+        {
+            var feeds = await this.GetFeeds(organization);
+            var relatedFeed = feeds.value.First(val => val.fullyQualifiedName == feedName);
+            string projectId = feeds.value[0].project.id;
+            string uri = relatedFeed.url;
+            var feedData = await this.GetFeedData(organization, uri);
+            string packageUri = feedData._links.packages.href;
+            var packages = await this.GetPackages(packageUri);
+            var relatedPackage = packages.value.First(val => val.name == packageName);
+            return await this.DownloadPackageByteArray(organization, projectId, relatedFeed.id,
+                packageName, relatedPackage.versions[0].version);
+        }
+        private async Task<byte[]> DownloadPackageByteArray(string Organization, string ProjectID, string FeedID,
             string PackageName, string PackageVersion)
         {
             string uri = $"https://pkgs.dev.azure.com/{Organization}/{ProjectID}/" +
